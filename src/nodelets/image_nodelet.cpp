@@ -37,6 +37,7 @@
 #include <nodelet/nodelet.h>
 #include <image_transport/image_transport.h>
 #include <dynamic_reconfigure/server.h>
+#include <std_msgs/Int8.h>
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/highgui/highgui.hpp>
@@ -45,278 +46,310 @@
 #include <boost/thread.hpp>
 #include <boost/format.hpp>
 
-
-namespace image_view {
-
-class ThreadSafeImage
+namespace image_view
 {
-  boost::mutex mutex_;
-  boost::condition_variable condition_;
-  cv::Mat image_;
 
-public:
-  void set(const cv::Mat& image);
-
-  cv::Mat get();
-
-  cv::Mat pop();
-};
-
-void ThreadSafeImage::set(const cv::Mat& image)
-{
-  boost::unique_lock<boost::mutex> lock(mutex_);
-  image_ = image;
-  condition_.notify_one();
-}
-
-cv::Mat ThreadSafeImage::get()
-{
-  boost::unique_lock<boost::mutex> lock(mutex_);
-  return image_;
-}
-
-cv::Mat ThreadSafeImage::pop()
-{
-  cv::Mat image;
-  {
-    boost::unique_lock<boost::mutex> lock(mutex_);
-    while (image_.empty())
+    class ThreadSafeImage
     {
-      condition_.wait(lock);
-    }
-    image = image_;
-    image_.release();
-  }
-  return image;
-}
+        boost::mutex mutex_;
+        boost::condition_variable condition_;
+        cv::Mat image_;
 
-class ImageNodelet : public nodelet::Nodelet
-{
-  image_transport::Subscriber sub_;
+    public:
+        void set(const cv::Mat &image);
 
-  boost::thread window_thread_;
+        cv::Mat get();
 
-  ThreadSafeImage queued_image_, shown_image_;
-  
-  std::string window_name_;
-  bool autosize_;
-  boost::format filename_format_;
-  int count_;
+        cv::Mat pop();
+    };
 
-  ros::Publisher pub_;
-
-  dynamic_reconfigure::Server<image_view::ImageViewConfig> srv_;
-  bool do_dynamic_scaling_;
-  int colormap_;
-  double min_image_value_;
-  double max_image_value_;
-  
-  virtual void onInit();
-  
-  void reconfigureCb(image_view::ImageViewConfig &config, uint32_t level);
-
-  void imageCb(const sensor_msgs::ImageConstPtr& msg);
-
-  static void mouseCb(int event, int x, int y, int flags, void* param);
-
-  void windowThread();  
-
-public:
-  ImageNodelet();
-
-  ~ImageNodelet();
-};
-
-ImageNodelet::ImageNodelet()
-  : filename_format_(""), count_(0)
-{
-}
-
-ImageNodelet::~ImageNodelet()
-{
-  if (window_thread_.joinable())
-  {
-    window_thread_.interrupt();
-    window_thread_.join();
-  }
-}
-
-void ImageNodelet::onInit()
-{
-  ros::NodeHandle nh = getNodeHandle();
-  ros::NodeHandle local_nh = getPrivateNodeHandle();
-
-  // Command line argument parsing
-  const std::vector<std::string>& argv = getMyArgv();
-  // First positional argument is the transport type
-  std::string transport;
-  local_nh.param("image_transport", transport, std::string("raw"));
-  for (int i = 0; i < (int)argv.size(); ++i)
-  {
-    if (argv[i][0] != '-')
+    void ThreadSafeImage::set(const cv::Mat &image)
     {
-      transport = argv[i];
-      break;
+        boost::unique_lock<boost::mutex> lock(mutex_);
+        image_ = image;
+        condition_.notify_one();
     }
-  }
-  NODELET_INFO_STREAM("Using transport \"" << transport << "\"");
-  // Internal option, should be used only by the image_view node
-  bool shutdown_on_close = std::find(argv.begin(), argv.end(),
-                                     "--shutdown-on-close") != argv.end();
 
-  // Default window name is the resolved topic name
-  std::string topic = nh.resolveName("image");
-  local_nh.param("window_name", window_name_, topic);
-
-  local_nh.param("autosize", autosize_, false);
-  
-  std::string format_string;
-  local_nh.param("filename_format", format_string, std::string("frame%04i.jpg"));
-  filename_format_.parse(format_string);
-
-  window_thread_ = boost::thread(&ImageNodelet::windowThread, this);
-
-  image_transport::ImageTransport it(nh);
-  image_transport::TransportHints hints(transport, ros::TransportHints(), getPrivateNodeHandle());
-  sub_ = it.subscribe(topic, 1, &ImageNodelet::imageCb, this, hints);
-  pub_ = local_nh.advertise<sensor_msgs::Image>("output", 1);
-
-  dynamic_reconfigure::Server<image_view::ImageViewConfig>::CallbackType f =
-    boost::bind(&ImageNodelet::reconfigureCb, this, _1, _2);
-  srv_.setCallback(f);
-}
-
-void ImageNodelet::reconfigureCb(image_view::ImageViewConfig &config, uint32_t level)
-{
-  do_dynamic_scaling_ = config.do_dynamic_scaling;
-  colormap_ = config.colormap;
-  min_image_value_ = config.min_image_value;
-  max_image_value_ = config.max_image_value;
-}
-
-void ImageNodelet::imageCb(const sensor_msgs::ImageConstPtr& msg)
-{
-  // We want to scale floating point images so that they display nicely
-  bool do_dynamic_scaling;
-  if (msg->encoding.find("F") != std::string::npos) {
-    do_dynamic_scaling = true;
-  } else {
-    do_dynamic_scaling = do_dynamic_scaling_;
-  }
-
-  // Convert to OpenCV native BGR color
-  cv_bridge::CvImageConstPtr cv_ptr;
-  try {
-    cv_bridge::CvtColorForDisplayOptions options;
-    options.do_dynamic_scaling = do_dynamic_scaling;
-    options.colormap = colormap_;
-    // Set min/max value for scaling to visualize depth/float image.
-    if (min_image_value_ == max_image_value_) {
-      // Not specified by rosparam, then set default value.
-      // Because of current sensor limitation, we use 10m as default of max range of depth
-      // with consistency to the configuration in rqt_image_view.
-      options.min_image_value = 0;
-      if (msg->encoding == "32FC1") {
-        options.max_image_value = 10;  // 10 [m]
-      } else if (msg->encoding == "16UC1") {
-        options.max_image_value = 10 * 1000;  // 10 * 1000 [mm]
-      }
-    } else {
-      options.min_image_value = min_image_value_;
-      options.max_image_value = max_image_value_;
-    }
-    cv_ptr = cvtColorForDisplay(cv_bridge::toCvShare(msg), "", options);
-    queued_image_.set(cv_ptr->image.clone());
-  }
-  catch (cv_bridge::Exception& e) {
-    NODELET_ERROR_THROTTLE(30, "Unable to convert '%s' image for display: '%s'",
-                             msg->encoding.c_str(), e.what());
-  }
-  if (pub_.getNumSubscribers() > 0) {
-    pub_.publish(cv_ptr);
-  }
-}
-
-void ImageNodelet::mouseCb(int event, int x, int y, int flags, void* param)
-{
-  ImageNodelet *this_ = reinterpret_cast<ImageNodelet*>(param);
-  // Trick to use NODELET_* logging macros in static function
-  boost::function<const std::string&()> getName =
-    boost::bind(&ImageNodelet::getName, this_);
-
-  if (event == cv::EVENT_LBUTTONDOWN)
-  {
-    NODELET_WARN_ONCE("Left-clicking no longer saves images. Right-click instead.");
-    return;
-  }
-  if (event != cv::EVENT_RBUTTONDOWN)
-    return;
-  
-  cv::Mat image(this_->shown_image_.get());
-  if (image.empty())
-  {
-    NODELET_WARN("Couldn't save image, no data!");
-    return;
-  }
-
-  std::string filename;
-  try
-  {
-    filename = (this_->filename_format_ % this_->count_).str();
-  }
-  catch (const boost::io::too_many_args&)
-  {
-    NODELET_WARN_ONCE("Couldn't save image, filename_format is invalid.");
-    return;
-  }
-  if (cv::imwrite(filename, image))
-  {
-    NODELET_INFO("Saved image %s", filename.c_str());
-    this_->count_++;
-  }
-  else
-  {
-    /// @todo Show full path, ask if user has permission to write there
-    NODELET_ERROR("Failed to save image.");
-  }
-}
-
-void ImageNodelet::windowThread()
-{
-  cv::namedWindow(window_name_, autosize_ ? cv::WND_PROP_AUTOSIZE : 0);
-  cv::setMouseCallback(window_name_, &ImageNodelet::mouseCb, this);
-
-  try
-  {
-    while (ros::ok())
+    cv::Mat ThreadSafeImage::get()
     {
-      cv::Mat image(queued_image_.pop());
-      cv::imshow(window_name_, image);
-      shown_image_.set(image);
-      cv::waitKey(1);
-
-      if (cv::getWindowProperty(window_name_, 1) < 0)
-      {
-        break;
-      }
+        boost::unique_lock<boost::mutex> lock(mutex_);
+        return image_;
     }
-  }
-  catch (const boost::thread_interrupted&)
-  {
-  }
 
-  cv::destroyWindow(window_name_);
+    cv::Mat ThreadSafeImage::pop()
+    {
+        cv::Mat image;
+        {
+            boost::unique_lock<boost::mutex> lock(mutex_);
+            while (image_.empty())
+            {
+                condition_.wait(lock);
+            }
+            image = image_;
+            image_.release();
+        }
+        return image;
+    }
 
-  pub_.shutdown();
+    class ImageNodelet : public nodelet::Nodelet
+    {
+        image_transport::Subscriber sub_;
+        ros::Subscriber index_sub;
 
-  if (ros::ok())
-  {
-    ros::shutdown();
-  }
-}
+        boost::thread window_thread_;
+
+        ThreadSafeImage queued_image_, shown_image_;
+
+        std::string window_name_;
+        bool autosize_;
+        boost::format filename_format_;
+        int count_;
+
+        dynamic_reconfigure::Server<image_view::ImageViewConfig> srv_;
+        bool do_dynamic_scaling_;
+        int colormap_;
+        double min_image_value_;
+        double max_image_value_;
+
+        virtual void onInit();
+
+        void reconfigureCb(image_view::ImageViewConfig &config, uint32_t level);
+
+        void imageCb(const sensor_msgs::ImageConstPtr &msg);
+
+        static void mouseCb(int event, int x, int y, int flags, void *param);
+
+        void windowThread();
+
+        void indexcb(const std_msgs::Int8 & index);
+
+    public:
+        ImageNodelet();
+
+        ~ImageNodelet();
+    };
+
+    ImageNodelet::ImageNodelet()
+        : filename_format_(""), count_(0)
+    {
+    }
+
+    ImageNodelet::~ImageNodelet()
+    {
+        if (window_thread_.joinable())
+        {
+            window_thread_.interrupt();
+            window_thread_.join();
+        }
+    }
+
+    void ImageNodelet::onInit()
+    {
+        ros::NodeHandle nh = getNodeHandle();
+        ros::NodeHandle local_nh = getPrivateNodeHandle();
+
+        // Command line argument parsing
+        const std::vector<std::string> &argv = getMyArgv();
+        // First positional argument is the transport type
+        std::string transport;
+        local_nh.param("image_transport", transport, std::string("raw"));
+        for (int i = 0; i < (int)argv.size(); ++i)
+        {
+            if (argv[i][0] != '-')
+            {
+                transport = argv[i];
+                break;
+            }
+        }
+        NODELET_INFO_STREAM("Using transport \"" << transport << "\"");
+        // Internal option, should be used only by the image_view node
+        bool shutdown_on_close = std::find(argv.begin(), argv.end(),
+                                           "--shutdown-on-close") != argv.end();
+
+        // Default window name is the resolved topic name
+        std::string topic = nh.resolveName("image");
+        local_nh.param("window_name", window_name_, topic);
+
+        local_nh.param("autosize", autosize_, false);
+
+        std::string format_string;
+        local_nh.param("filename_format", format_string, std::string("frame%04i.jpg"));
+        filename_format_.parse(format_string);
+
+        window_thread_ = boost::thread(&ImageNodelet::windowThread, this);
+ 
+        index_sub = nh.subscribe<std_msgs::Int8>("vr_index", 10, indexcb);
+
+        // 动态配置服务器的回调函数
+        dynamic_reconfigure::Server<image_view::ImageViewConfig>::CallbackType f =
+            boost::bind(&ImageNodelet::reconfigureCb, this, _1, _2);
+        srv_.setCallback(f);
+    }
+
+    void ImageNodelet::indexcb(const std_msgs::Int8 & index)
+    {
+
+    }
+
+    void ImageNodelet::reconfigureCb(image_view::ImageViewConfig &config, uint32_t level)
+    {
+        do_dynamic_scaling_ = config.do_dynamic_scaling;
+        colormap_ = config.colormap;
+        min_image_value_ = config.min_image_value;
+        max_image_value_ = config.max_image_value;
+    }
+
+    void ImageNodelet::imageCb(const sensor_msgs::ImageConstPtr &msg)
+    {
+        // We want to scale floating point images so that they display nicely
+        bool do_dynamic_scaling;
+        if (msg->encoding.find("F") != std::string::npos)
+        {
+            do_dynamic_scaling = true;
+        }
+        else
+        {
+            do_dynamic_scaling = do_dynamic_scaling_;
+        }
+
+        // Convert to OpenCV native BGR color
+        cv_bridge::CvImageConstPtr cv_ptr;
+        cv::Mat img;
+        CvFont font;
+        try
+        {
+            cv_bridge::CvtColorForDisplayOptions options;
+            options.do_dynamic_scaling = do_dynamic_scaling;
+            options.colormap = colormap_;
+            // Set min/max value for scaling to visualize depth/float image.
+            if (min_image_value_ == max_image_value_)
+            {
+                // Not specified by rosparam, then set default value.
+                // Because of current sensor limitation, we use 10m as default of max range of depth
+                // with consistency to the configuration in rqt_image_view.
+                options.min_image_value = 0;
+                if (msg->encoding == "32FC1")
+                {
+                    options.max_image_value = 10; // 10 [m]
+                }
+                else if (msg->encoding == "16UC1")
+                {
+                    options.max_image_value = 10 * 1000; // 10 * 1000 [mm]
+                }
+            }
+            else
+            {
+                options.min_image_value = min_image_value_;
+                options.max_image_value = max_image_value_;
+            }
+            cv_ptr = cvtColorForDisplay(cv_bridge::toCvShare(msg), "", options);
+            img = cv_ptr->image.clone();
+
+            
+            queued_image_.set(cv_ptr->image.clone());
+        }
+        catch (cv_bridge::Exception &e)
+        {
+            NODELET_ERROR_THROTTLE(30, "Unable to convert '%s' image for display: '%s'",
+                                   msg->encoding.c_str(), e.what());
+        }
+    }
+
+    void ImageNodelet::mouseCb(int event, int x, int y, int flags, void *param)
+    {
+        ImageNodelet *this_ = reinterpret_cast<ImageNodelet *>(param);
+        // Trick to use NODELET_* logging macros in static function
+        boost::function<const std::string &()> getName =
+            boost::bind(&ImageNodelet::getName, this_);
+
+        if (event == cv::EVENT_LBUTTONDOWN)
+        {
+            NODELET_WARN_ONCE("Left-clicking no longer saves images. Right-click instead.");
+            return;
+        }
+        if (event != cv::EVENT_RBUTTONDOWN)
+            return;
+
+        cv::Mat image(this_->shown_image_.get());
+        if (image.empty())
+        {
+            NODELET_WARN("Couldn't save image, no data!");
+            return;
+        }
+
+        std::string filename;
+        try
+        {
+            filename = (this_->filename_format_ % this_->count_).str();
+        }
+        catch (const boost::io::too_many_args &)
+        {
+            NODELET_WARN_ONCE("Couldn't save image, filename_format is invalid.");
+            return;
+        }
+        if (cv::imwrite(filename, image))
+        {
+            NODELET_INFO("Saved image %s", filename.c_str());
+            this_->count_++;
+        }
+        else
+        {
+            /// @todo Show full path, ask if user has permission to write there
+            NODELET_ERROR("Failed to save image.");
+        }
+    }
+
+    void ImageNodelet::windowThread()
+    {
+        cv::namedWindow(window_name_, cv::WINDOW_NORMAL );
+        cv::setWindowProperty(window_name_, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+        cv::moveWindow(window_name_, 1920, 0);
+        cv::resizeWindow(window_name_, 2560, 1440);
+        // cv::setMouseCallback(window_name_, &ImageNodelet::mouseCb, this);        //取消鼠标回调
+
+        cv::Mat resized_image;
+        cv::Mat show_image(cv::Size(2560, 1440), CV_8UC3);
+        int resized_height = 0;
+
+        try
+        {
+            while (ros::ok())
+            {
+                cv::Mat image(queued_image_.pop());
+
+                // 调整背景颜色为黑色，首先调整图像大小
+                resized_height = int(float(image.size[0])* 2560 / float(image.size[1]));
+                cv::resize(image, resized_image, cv::Size(2560, resized_height) );
+
+                // 加入黑色的边框
+                cv::copyMakeBorder(resized_image, show_image, (1440 - resized_height)/2, (1440 - resized_height)/2, 0, 0, 0, cv::Scalar(0, 0, 0));
+                NODELET_INFO_STREAM(show_image.size());
+
+                cv::imshow(window_name_, show_image);
+
+                // shown_image_.set(image);         // 不需要记录，也就不需要收集显示过的图像
+                cv::waitKey(1);
+
+                if (cv::getWindowProperty(window_name_, 1) < 0)
+                {
+                    break;
+                }
+            }
+        }
+        catch (const boost::thread_interrupted &)
+        {
+        }
+
+        cv::destroyWindow(window_name_);
+
+        if (ros::ok())
+        {
+            ros::shutdown();
+        }
+    }
 
 } // namespace image_view
 
 // Register the nodelet
 #include <pluginlib/class_list_macros.h>
-PLUGINLIB_EXPORT_CLASS( image_view::ImageNodelet, nodelet::Nodelet)
+PLUGINLIB_EXPORT_CLASS(image_view::ImageNodelet, nodelet::Nodelet)
