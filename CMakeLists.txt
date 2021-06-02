@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8)
-project(test_image_view)
+project(simple_image_view)
 
 find_package(catkin REQUIRED COMPONENTS 
     camera_calibration_parsers 

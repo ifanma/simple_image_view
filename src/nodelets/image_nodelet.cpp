@@ -111,6 +111,9 @@ namespace image_view
         double min_image_value_;
         double max_image_value_;
 
+        bool test_flag;
+        bool is_stereo;
+
         virtual void onInit();
 
         void reconfigureCb(image_view::ImageViewConfig &config, uint32_t level);
@@ -121,7 +124,7 @@ namespace image_view
 
         void windowThread();
 
-        void indexcb(const std_msgs::Int8 & index);
+        void indexcb(const std_msgs::Int8ConstPtr & index);
 
     public:
         ImageNodelet();
@@ -148,37 +151,13 @@ namespace image_view
         ros::NodeHandle nh = getNodeHandle();
         ros::NodeHandle local_nh = getPrivateNodeHandle();
 
-        // Command line argument parsing
-        const std::vector<std::string> &argv = getMyArgv();
-        // First positional argument is the transport type
-        std::string transport;
-        local_nh.param("image_transport", transport, std::string("raw"));
-        for (int i = 0; i < (int)argv.size(); ++i)
-        {
-            if (argv[i][0] != '-')
-            {
-                transport = argv[i];
-                break;
-            }
-        }
-        NODELET_INFO_STREAM("Using transport \"" << transport << "\"");
-        // Internal option, should be used only by the image_view node
-        bool shutdown_on_close = std::find(argv.begin(), argv.end(),
-                                           "--shutdown-on-close") != argv.end();
-
-        // Default window name is the resolved topic name
-        std::string topic = nh.resolveName("image");
-        local_nh.param("window_name", window_name_, topic);
-
-        local_nh.param("autosize", autosize_, false);
-
-        std::string format_string;
-        local_nh.param("filename_format", format_string, std::string("frame%04i.jpg"));
-        filename_format_.parse(format_string);
+        // Default window name is the image_vr
+        local_nh.param("window_name", window_name_, std::string("image_vr"));
+        local_nh.param("test_flag", test_flag, false);
 
         window_thread_ = boost::thread(&ImageNodelet::windowThread, this);
  
-        index_sub = nh.subscribe<std_msgs::Int8>("vr_index", 10, indexcb);
+        index_sub = nh.subscribe<std_msgs::Int8>("vr_index", 1, &ImageNodelet::indexcb, this);
 
         // 动态配置服务器的回调函数
         dynamic_reconfigure::Server<image_view::ImageViewConfig>::CallbackType f =
@@ -186,8 +165,27 @@ namespace image_view
         srv_.setCallback(f);
     }
 
-    void ImageNodelet::indexcb(const std_msgs::Int8 & index)
+    void ImageNodelet::indexcb(const std_msgs::Int8ConstPtr & index)
     {
+        ros::NodeHandle nh = getNodeHandle();
+        ros::NodeHandle local_nh = getPrivateNodeHandle();
+        std::string transport;
+        std::string topic_;
+        local_nh.param("image_transport_"+std::to_string(index->data), transport, std::string("raw"));
+        local_nh.param("image_topic_"+std::to_string(index->data), topic_, std::string("raw"));
+        local_nh.param("image_stereo_"+std::to_string(index->data), is_stereo, true);
+
+        if (sub_ != NULL)
+        {
+            sub_.shutdown();
+        }
+        
+        NODELET_INFO_STREAM("Using transport \"" << transport << "\"");
+
+        image_transport::ImageTransport it(nh);
+        image_transport::TransportHints hints(transport, ros::TransportHints(), getPrivateNodeHandle());
+
+        sub_ = it.subscribe(topic_, 1, &ImageNodelet::imageCb, this, hints);
 
     }
 
@@ -215,7 +213,7 @@ namespace image_view
         // Convert to OpenCV native BGR color
         cv_bridge::CvImageConstPtr cv_ptr;
         cv::Mat img;
-        CvFont font;
+        cv::Mat out;
         try
         {
             cv_bridge::CvtColorForDisplayOptions options;
@@ -243,10 +241,18 @@ namespace image_view
                 options.max_image_value = max_image_value_;
             }
             cv_ptr = cvtColorForDisplay(cv_bridge::toCvShare(msg), "", options);
-            img = cv_ptr->image.clone();
-
             
-            queued_image_.set(cv_ptr->image.clone());
+            if (! is_stereo)
+            {
+                img = cv_ptr->image.clone();
+                cv::hconcat(img, img, out);
+                queued_image_.set(out.clone());
+            }
+            else
+            {
+                queued_image_.set(cv_ptr->image.clone());
+            }
+            
         }
         catch (cv_bridge::Exception &e)
         {
@@ -302,9 +308,17 @@ namespace image_view
     void ImageNodelet::windowThread()
     {
         cv::namedWindow(window_name_, cv::WINDOW_NORMAL );
-        cv::setWindowProperty(window_name_, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-        cv::moveWindow(window_name_, 1920, 0);
-        cv::resizeWindow(window_name_, 2560, 1440);
+
+        if (test_flag){
+            cv::resizeWindow(window_name_, 1920, 1080);        
+        }    
+        else
+        {
+            cv::setWindowProperty(window_name_, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+            cv::moveWindow(window_name_, 1920, 0);
+            cv::resizeWindow(window_name_, 2560, 1440);        
+        }
+       
         // cv::setMouseCallback(window_name_, &ImageNodelet::mouseCb, this);        //取消鼠标回调
 
         cv::Mat resized_image;
