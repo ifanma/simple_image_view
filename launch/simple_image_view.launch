@@ -2,7 +2,7 @@
 <launch>
     <node pkg="simple_image_view" type="image_view" name="image_view" output="screen">
         <param name="test_flag" value="false"/>
-        <param name="image_topic_1" value="/zedm/zed_node/stereo/image_rect_color"/>
+        <param name="image_topic_1" value="/camera/image_raw"/>
         <param name="image_topic_2" value="/zedm/zed_node/left/image_rect_color"/>
         <param name="image_topic_3" value="/zedm/zed_node/right/image_rect_color"/>
         <param name="image_transport_1" value="theora"/>
@@ -11,5 +11,8 @@
         <param name="image_stereo_1" value="true"/>
         <param name="image_stereo_2" value="false"/>
         <param name="image_stereo_3" value="false"/>
+        <param name="need_flip_1" value="true"/>
+        <param name="need_flip_2" value="false"/>
+        <param name="need_flip_3" value="false"/>
     </node>
 </launch>

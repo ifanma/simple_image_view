@@ -113,6 +113,8 @@ namespace image_view
 
         bool test_flag;
         bool is_stereo;
+        bool is_flip;
+
 
         virtual void onInit();
 
@@ -174,6 +176,7 @@ namespace image_view
         local_nh.param("image_transport_"+std::to_string(index->data), transport, std::string("raw"));
         local_nh.param("image_topic_"+std::to_string(index->data), topic_, std::string("raw"));
         local_nh.param("image_stereo_"+std::to_string(index->data), is_stereo, true);
+        local_nh.param("need_flip_"+std::to_string(index->data), is_flip, true);
 
         if (sub_ != NULL)
         {
@@ -246,13 +249,18 @@ namespace image_view
             {
                 img = cv_ptr->image.clone();
                 cv::hconcat(img, img, out);
-                queued_image_.set(out.clone());
             }
             else
             {
-                queued_image_.set(cv_ptr->image.clone());
+                out = cv_ptr->image.clone();
             }
-            
+
+            if (is_flip)
+            {
+                cv::flip(out.clone(), out, 0);
+            }
+
+            queued_image_.set(out.clone());
         }
         catch (cv_bridge::Exception &e)
         {
