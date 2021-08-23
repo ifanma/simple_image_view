@@ -165,6 +165,9 @@ namespace image_view
         dynamic_reconfigure::Server<image_view::ImageViewConfig>::CallbackType f =
             boost::bind(&ImageNodelet::reconfigureCb, this, _1, _2);
         srv_.setCallback(f);
+
+        ROS_INFO_STREAM("on init");
+
     }
 
     void ImageNodelet::indexcb(const std_msgs::Int8ConstPtr & index)
@@ -203,6 +206,8 @@ namespace image_view
     void ImageNodelet::imageCb(const sensor_msgs::ImageConstPtr &msg)
     {
         // We want to scale floating point images so that they display nicely
+
+        // ROS_INFO_STREAM("image here");
         bool do_dynamic_scaling;
         if (msg->encoding.find("F") != std::string::npos)
         {
@@ -257,7 +262,7 @@ namespace image_view
 
             if (is_flip)
             {
-                cv::flip(out.clone(), out, 0);
+                cv::flip(out.clone(), out, -1);
             }
 
             queued_image_.set(out.clone());
@@ -315,15 +320,18 @@ namespace image_view
 
     void ImageNodelet::windowThread()
     {
+        // ROS_INFO_STREAM("windows init here");
+
         cv::namedWindow(window_name_, cv::WINDOW_NORMAL );
+        // cv::namedWindow(window_name_, cv::WINDOW_AUTOSIZE );
 
         if (test_flag){
             cv::resizeWindow(window_name_, 1920, 1080);        
         }    
         else
         {
+            cv::moveWindow(window_name_, 1920*2, 0);
             cv::setWindowProperty(window_name_, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-            cv::moveWindow(window_name_, 1920, 0);
             cv::resizeWindow(window_name_, 2560, 1440);        
         }
        
@@ -337,7 +345,10 @@ namespace image_view
         {
             while (ros::ok())
             {
+                // ROS_INFO_STREAM("windows refresh 1");
+
                 cv::Mat image(queued_image_.pop());
+                // ROS_INFO_STREAM("windows refresh 2  ");
 
                 // 调整背景颜色为黑色，首先调整图像大小
                 resized_height = int(float(image.size[0])* 2560 / float(image.size[1]));
@@ -356,11 +367,16 @@ namespace image_view
                 {
                     break;
                 }
+                // ROS_INFO_STREAM("windows refresh 3");
             }
         }
-        catch (const boost::thread_interrupted &)
+        catch (const boost::thread_interrupted &e)
         {
+            ROS_INFO_STREAM("somt thing wrong");
         }
+
+        // ROS_INFO_STREAM("windows break");
+
 
         cv::destroyWindow(window_name_);
 

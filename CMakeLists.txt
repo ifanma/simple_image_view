@@ -3,7 +3,8 @@ project(simple_image_view)
 
 find_package(catkin REQUIRED COMPONENTS 
     camera_calibration_parsers 
-    cv_bridge dynamic_reconfigure 
+    cv_bridge 
+    dynamic_reconfigure 
     image_transport 
     message_filters 
     message_generation 
@@ -11,7 +12,7 @@ find_package(catkin REQUIRED COMPONENTS
     rosconsole 
     roscpp 
     std_srvs 
-    stereo_msgs
+    
 )
 
 generate_dynamic_reconfigure_options(cfg/ImageView.cfg)

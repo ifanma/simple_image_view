@@ -2,17 +2,31 @@
 <launch>
     <node pkg="simple_image_view" type="image_view" name="image_view" output="screen">
         <param name="test_flag" value="false"/>
-        <param name="image_topic_1" value="/camera/image_raw"/>
-        <param name="image_topic_2" value="/zedm/zed_node/left/image_rect_color"/>
-        <param name="image_topic_3" value="/zedm/zed_node/right/image_rect_color"/>
-        <param name="image_transport_1" value="theora"/>
-        <param name="image_transport_2" value="theora"/>
+        <param name="image_topic_1" value="/zedm/zed_node/stereo/image_rect_color"/>
+        <param name="image_topic_2" value="/camera/image_raw"/>
+        <param name="image_topic_3" value="/usb_cam2/image_raw"/>
+        <param name="image_topic_4" value="/monitor_image"/>
+        <param name="image_topic_5" value="/zedm/zed_node/stereo_raw/image_raw_color"/>
+
+        <param name="image_transport_1" value="compressed"/>
+        <param name="image_transport_2" value="compressed"/>
         <param name="image_transport_3" value="theora"/>
+        <param name="image_transport_4" value="compressed"/>
+        <param name="image_transport_5" value="theora"/>
+
         <param name="image_stereo_1" value="true"/>
-        <param name="image_stereo_2" value="false"/>
+        <param name="image_stereo_2" value="true"/>
         <param name="image_stereo_3" value="false"/>
-        <param name="need_flip_1" value="true"/>
-        <param name="need_flip_2" value="false"/>
+        <param name="image_stereo_4" value="false"/>
+        <param name="image_stereo_5" value="true"/>
+
+        <param name="need_flip_1" value="false"/>
+        <param name="need_flip_2" value="true"/>
         <param name="need_flip_3" value="false"/>
+        <param name="need_flip_4" value="false"/>
+        <param name="need_flip_5" value="false"/>
     </node>
+
+    <node pkg="spacenav_vrindex" type="vrindex" name="vrindex"/>
+    
 </launch>
